@@ -1,0 +1,12 @@
+[deps]
+AdaOPS = "eadfb9d8-44f1-454c-a5eb-0663ee7d74a1"
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+POMDPModels = "355abbd5-f08e-5560-ac9e-8b5f2592a0ca"
+POMDPTools = "7588e00f-9cae-40de-98dc-e0c70c48cdd7"
+POMDPs = "a93abf59-7444-517b-a68a-c42f96afdd7d"
+ParticleFilters = "c8b314e2-9260-5cf8-ae76-3be7461ca6d0"
+RockSample = "de008ff0-c357-11e8-3329-7fe746fe836e"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
