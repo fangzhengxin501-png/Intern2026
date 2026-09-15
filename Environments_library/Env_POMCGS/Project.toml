@@ -1,0 +1,48 @@
+name = "POMCGraphSearch"
+uuid = "e82fe6b4-19c7-48e5-8e59-9f77de09f3d8"
+version = "0.1.6"
+authors = ["Yang You <yang.you@eng.ox.ac.uk>"]
+
+[deps]
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+Clustering = "aaaa29a8-35af-508c-8bc3-b662a17a0fe5"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+LaserTag = "041f53e1-e4f8-54ec-814d-e9e995aa38d4"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+OrderedCollections = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
+POMDPModels = "355abbd5-f08e-5560-ac9e-8b5f2592a0ca"
+POMDPTools = "7588e00f-9cae-40de-98dc-e0c70c48cdd7"
+POMDPs = "a93abf59-7444-517b-a68a-c42f96afdd7d"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+RoombaPOMDPs = "fe2df5ea-4d44-4e5a-a895-9dbc87b19b37"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
+
+[compat]
+CSV = "0.10"
+Clustering = "0.15"
+DataFrames = "1"
+Distributions = "0.25.130"
+JLD2 = "0.6"
+JSON = "0.18, 1"
+LaserTag = "0.1.4"
+OrderedCollections = "1"
+POMDPModels = "0.4.22"
+POMDPTools = "1"
+POMDPs = "0.9, 1"
+RoombaPOMDPs = "0.1.0"
+StatsBase = "0.34"
+julia = "1.6"
+
+[extras]
+POMDPModels = "355abbd5-f08e-5560-ac9e-8b5f2592a0ca"
+POMDPTools = "7588e00f-9cae-40de-98dc-e0c70c48cdd7"
+RockSample = "de008ff0-c357-11e8-3329-7fe746fe836e"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test", "POMDPTools", "RockSample", "POMDPModels"]

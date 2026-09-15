@@ -1,0 +1,390 @@
+mutable struct Planner
+	_max_b_gap::Float64                          
+	_max_graph_node_size::Int64                  
+	_nb_iter::Int64                              
+	_discount::Float64                           
+	_epsilon::Float64                            
+	_C_star::Int64
+	_C_ucb::Float64								 
+	_max_search_depth::Int64					
+	_max_planning_secs::Float64                   
+	_nb_sim::Int64								 
+	_nb_eval::Int64                              
+	_Q_learning_policy::Qlearning
+	_lower_bound_policy::LowerBoundPolicy
+	_Log_result::LogResult
+	_k_a::Float64
+    _alpha_a::Float64
+    _bool_APW::Bool
+end
+
+
+
+function ProcessActionWeightedParticle(model::Model,
+										fsc::FSC,
+										nI::Int64,
+										a::A,
+										discount::Float64,
+										Q_learning_policy::Qlearning,
+										lower_bound_policy::LowerBoundPolicy
+										) where {A}
+
+
+	sum_R_a, sum_all_weights, all_oI_weight, all_dict_weighted_samples = CollectSamplesAndBuildNewBeliefsWeightedParticles(model::Model,
+																														fsc,
+																														nI,
+																														a)
+												
+	# Build new belief nodes
+	fsc._nodes[nI]._R_action[a] = sum_R_a
+	expected_future_V = 0.0
+
+	# for each new belief, check distances to existing belief nodes, and create new nodes if needed
+	for (key, value) in all_dict_weighted_samples
+		NormalizeDict(all_dict_weighted_samples[key])
+		sort!(all_dict_weighted_samples[key], rev = true, byvalue = true)
+     	heuristic_value, action_space, heuristic_Q_actions = GetValueQMDP(all_dict_weighted_samples[key], 
+																		Q_learning_policy, 
+																		model)
+		bool_search, n_nextI = SearchOrInsertBelief(fsc, all_dict_weighted_samples[key], heuristic_value, fsc._max_accept_belief_gap)
+        if !bool_search
+			HeuristicNodeQ(fsc._nodes[n_nextI], heuristic_Q_actions, lower_bound_policy)
+		end
+		fsc._eta[nI][Pair(a, key)] = n_nextI
+		obs_weight = all_oI_weight[key]
+		expected_future_V += (obs_weight / sum_all_weights) * fsc._nodes[n_nextI]._V_node
+	end
+
+	# --- Update Q(n, a) -----
+	fsc._nodes[nI]._Q_action[a] = fsc._nodes[nI]._R_action[a] + discount * expected_future_V
+	return fsc._nodes[nI]._Q_action[a]
+end
+
+
+function Simulate(model::Model,
+				fsc::FSC,
+				s::Int,
+				nI::Int64,
+				depth::Int64,
+				max_depth::Int64,
+				discount::Float64,
+				C_star::Int64,
+				C_ucb::Float64,
+				epsilon::Float64,
+				Q_learning_policy::Qlearning,
+				lower_bound_policy::LowerBoundPolicy,
+				bool_APW::Bool,
+				k_a::Float64,
+				alpha_a::Float64)
+
+	if depth > max_depth
+		return 0
+	end
+
+
+	if (discount^depth) * (Q_learning_policy._R_max - Q_learning_policy._R_min) < epsilon || isterminal(model, s)
+		return 0
+	end
+
+
+	if bool_APW
+        a = ActionProgressiveWidening(fsc, nI, fsc._action_space, k_a, alpha_a, C_star, C_ucb)
+    else
+        a = UcbActionSelection(fsc, nI, C_star, C_ucb)
+    end
+
+
+	fsc._nodes[nI]._visits_node += 1
+	fsc._nodes[nI]._visits_action[a] += 1
+
+	if fsc._nodes[nI]._visits_action[a] == 1
+		return ProcessActionWeightedParticle(model, 
+											fsc, 
+											nI, 
+											a, 
+											discount, 
+											Q_learning_policy, 
+											lower_bound_policy)
+	end
+
+	sp, o, r = Step(model, s, a)
+	# nI_next = fsc._eta[nI][Pair(a, o)]
+	nI_next = transition(fsc, nI, a, o)
+
+	esti_V = fsc._nodes[nI]._R_action[a] + discount * Simulate(model, 
+																fsc, 
+																sp, 
+																nI_next, 
+																depth + 1, 
+																max_depth, 
+																discount, 
+																C_star, 
+																C_ucb,
+																epsilon, 
+																Q_learning_policy, 
+																lower_bound_policy,
+																bool_APW,
+																k_a,
+																alpha_a)
+
+	fsc._nodes[nI]._Q_action[a] = fsc._nodes[nI]._Q_action[a] + ((esti_V - fsc._nodes[nI]._Q_action[a]) / fsc._nodes[nI]._visits_action[a])
+	fsc._nodes[nI]._V_node = esti_V
+
+	return esti_V
+end
+
+
+
+function MCGraphSearchPOMDP(model::Model,
+							b::Vector{Int},
+							dict_weighted_b::OrderedDict{Int, Float64},
+							fsc::FSC,
+							planner::Planner)
+
+	pomdp = model.pomdp
+	b0 = initialstate(pomdp)
+
+	# assume an empty fsc
+	node_start = CreateNode(dict_weighted_b, fsc._action_space)
+	heuristic_value, action_space, heuristic_Q_actions = GetValueQMDP(dict_weighted_b, 
+																	planner._Q_learning_policy, 
+																	model)
+
+	HeuristicNodeQ(node_start, heuristic_Q_actions, planner._lower_bound_policy)
+	push!(fsc._nodes, node_start)
+    push!(fsc._nodes_VQMDP_labels, maximum(values(node_start._Heuristic_Q_action)))
+
+	vec_episodes = Vector{Int64}()
+	vec_evaluation_value = Vector{Float64}()
+	vec_fsc_size = Vector{Int64}()
+
+
+    # Headers
+    headers = ["Iter", "Total Simulations", "FSC Size", "Lower Bound L", "Upper Bound U", "Planning Time (s)"]
+    
+    # Print headers with fixed width formatting
+    header_string = @sprintf "%6s %18s %12s %15s %15s %18s" headers...
+    println(repeat("-", 90))
+    println(header_string)
+    println(repeat("-", 90))
+
+	sum_planning_time_secs = 0
+	for i in 1:planner._nb_iter
+		elapsed_time = @elapsed begin
+			s = rand(b)
+			Simulate(model,
+				fsc,
+				s,
+				1,
+				0,
+				planner._max_search_depth,
+				planner._discount,
+				planner._C_star,
+				planner._C_ucb,
+				planner._epsilon,
+				planner._Q_learning_policy,
+				planner._lower_bound_policy,
+				planner._bool_APW,
+				planner._k_a,
+				planner._alpha_a)
+		end
+
+		sum_planning_time_secs += elapsed_time
+        
+		if sum_planning_time_secs > planner._max_planning_secs
+			println("Timeout reached")
+			break
+		end
+
+		if i % planner._nb_sim == 0
+
+            iter = Int(i ÷ planner._nb_sim)
+            fsc_size = length(fsc._nodes)
+			U, L = EvaluateBounds(pomdp, 
+									fsc, 
+									planner._Q_learning_policy, 
+									POMDPs.discount(pomdp), 
+									planner._nb_eval, 
+									planner._C_star,
+									planner._epsilon,
+									planner._Log_result._vec_evaluation_value,
+									planner._Log_result._vec_upper_bound)
+			
+
+			row_string = @sprintf "%6d %18d %12d %15.6f %15.6f %18.6f" iter i fsc_size L U sum_planning_time_secs
+            println(row_string)
+
+			push!(planner._Log_result._vec_episodes, i)
+			push!(planner._Log_result._vec_fsc_size, length(fsc._nodes))
+            push!(planner._Log_result._vec_time, sum_planning_time_secs)
+			if U - L < planner._epsilon
+				break
+			end
+		end
+	end
+	
+
+	return vec_episodes, vec_evaluation_value, vec_fsc_size
+
+end
+
+
+function CollectSamplesAndBuildNewBeliefsWeightedParticles(
+    model::Model,
+    fsc::FSC,
+    nI::Int64,
+    a::A
+) where {A}
+    node = fsc._nodes[nI]
+	O = eltype(fsc._observation_space)
+    weighted_particles = node._dict_weighted_samples
+
+    all_oI_weight = Dict{O, Float64}()
+    all_dict_weighted_samples = Dict{O, OrderedDict{Int, Float64}}()
+
+    sum_R_a = 0.0
+    sum_all_weights = 0.0
+
+    for (s, w) in weighted_particles
+        if !haskey(model.Cache_sa_to_index, (s, a))
+            Process_new_sa(model, s, a)
+        end
+        saI = model.Cache_sa_to_index[(s, a)]
+        
+        if haskey(model.obs_index_cache, saI)
+            transitions_for_o = model.obs_index_cache[saI]
+            
+            for (o, sp_probs) in transitions_for_o
+                for (sp, prob) in sp_probs
+                    key = (sp, o)
+                    avg_r = model.Cache_steps[saI][key][2]  
+                    
+                    transition_weight = w * prob
+                    sum_R_a += avg_r * transition_weight
+                    sum_all_weights += transition_weight
+
+                    all_oI_weight[o] = get(all_oI_weight, o, 0.0) + transition_weight
+
+                    odict = get!(all_dict_weighted_samples, o, OrderedDict{Int, Float64}())
+                    odict[sp] = get(odict, sp, 0.0) + transition_weight
+                end
+            end
+        else
+            transitions = Step_batch(model, s, a)
+            for ((sp, o), (prob, avg_r)) in transitions
+                transition_weight = w * prob
+                sum_R_a += avg_r * transition_weight
+                sum_all_weights += transition_weight
+
+                all_oI_weight[o] = get(all_oI_weight, o, 0.0) + transition_weight
+
+                odict = get!(all_dict_weighted_samples, o, OrderedDict{Int, Float64}())
+                odict[sp] = get(odict, sp, 0.0) + transition_weight
+            end
+        end
+    end
+
+    sum_R_a = (sum_all_weights > 0) ? (sum_R_a / sum_all_weights) : 0.0
+
+    return sum_R_a, sum_all_weights, all_oI_weight, all_dict_weighted_samples
+end
+
+
+
+
+function SimulationOnline(model::Model,
+						dict_weighted_b::OrderedDict{Int, Float64},
+						fsc::FSC,
+						planner::Planner,
+						max_steps::Int,
+						planning_time::Float64;
+						verbose::Bool = true)
+
+	pomdp = model.pomdp
+	b0 = initialstate(pomdp)
+
+	# assume an empty fsc
+	node_start = CreateNode(dict_weighted_b, fsc._action_space)
+	heuristic_value, action_space, heuristic_Q_actions = GetValueQMDP(dict_weighted_b, 
+																	planner._Q_learning_policy, 
+																	model)
+
+
+	HeuristicNodeQ(node_start, heuristic_Q_actions, planner._lower_bound_policy)
+	push!(fsc._nodes, node_start)
+    push!(fsc._nodes_VQMDP_labels, maximum(values(node_start._Heuristic_Q_action)))
+
+    obs_cluster_model = fsc._obs_kmeans_centroids
+    bool_continuous_observations = length(obs_cluster_model) > 0
+
+	# --- Initialize starting state ---
+    s = rand(b0)
+    nI = 1
+    sum_r = 0.0
+    step = 0
+	discount = planner._discount
+
+    while step ≤ max_steps && POMDPs.isterminal(pomdp, s) == false
+
+		# run online planning with given planning_time 
+		sum_planning_time_secs = 0
+		for i in 1:planner._nb_iter
+			elapsed_time = @elapsed begin
+				Simulate(model,
+					fsc,
+					sample_key_from_weighted_dict(fsc._nodes[nI]._dict_weighted_samples),
+					nI,
+					0,
+					planner._max_search_depth,
+					planner._discount,
+					planner._C_star,
+					planner._C_ucb,
+					planner._epsilon,
+					planner._Q_learning_policy,
+					planner._lower_bound_policy,
+					planner._bool_APW,
+					planner._k_a,
+					planner._alpha_a)
+			end
+
+			sum_planning_time_secs += elapsed_time
+			
+			if sum_planning_time_secs > planning_time
+				break
+			end
+		end
+
+
+        a = GetBestAction(fsc._nodes[nI])
+        sp, o, r = @gen(:sp, :o, :r)(pomdp, s, a)
+
+        if bool_continuous_observations
+            o_vec = convert_o(Vector{Float64}, o, pomdp)
+            o = predict_cluster(obs_cluster_model, o_vec)
+        end
+
+        sum_r += (discount^step) * r
+
+        if verbose
+            println("---------")
+            println("Step: ", step)
+            println("State: ", s)
+            println("Action: ", a)
+            println("Observation: ", o)
+            println("Reward: ", r)
+            println("Node: ", nI)
+            println("Node visits: ", fsc._nodes[nI]._visits_node)
+            println("Node value: ", fsc._nodes[nI]._V_node)
+        end
+
+        s = sp
+        nI = transition(fsc, nI, a, o)
+        step += 1
+    end
+
+    if verbose
+        println("Simulation finished after $step steps. Total discounted reward: $sum_r")
+    end
+
+    return sum_r
+end
