@@ -6,11 +6,15 @@ using Dates
 using ParticleFilters
 using RockSample
 
+# 本文件由 test_RS15_POMCPOW.jl 派生: 除了 RockSamplePOMDP(11, 11) 之外,
+# 所有实验环境参数和超参数与 RS15 版本逐字相同, 这样 RS11/RS15 的差异
+# 只来自问题规模本身。改 RS15 的参数时记得同步改这里。
+
 
 Random.seed!(1)
 
 #POMDP problem
-pomdp = RockSamplePOMDP(15,15)
+pomdp = RockSamplePOMDP(11, 11)
 
 
 mx_depth = 40 #defult 10, try fixed
@@ -49,11 +53,11 @@ end
 # Save results to CSV
 df = DataFrame(run_id = 1:nb_runs, return_value = results)
 timestamp = Dates.format(now(), "yyyymmdd_HHMMSS")
-CSV.write("data_POMCPOW/RS15_UCB(1.0)_pomcpow_$(timestamp)_$(mean(results))_R1.csv", df)
+CSV.write("data_POMCPOW/RS11_UCB(1.0)_pomcpow_$(timestamp)_$(mean(results))_R1.csv", df)
 
 # 均值和标准差单独存一个 CSV
 summary_df = DataFrame(mean_return = mean(results), std_return = std(results))
-CSV.write("data_POMCPOW/RS15_UCB(1.0)_pomcpow_$(timestamp)_summary_R1.csv", summary_df)
+CSV.write("data_POMCPOW/RS11_UCB(1.0)_pomcpow_$(timestamp)_summary_R1.csv", summary_df)
 
 println("\nTotal return: $(sum(results))")
 println("Average return: $(mean(results)), Std: $(std(results))")

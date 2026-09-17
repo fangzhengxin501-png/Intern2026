@@ -63,7 +63,7 @@ end
 # Save results to CSV
 df = DataFrame(run_id = 1:nb_runs, return_value = results)
 timestamp = Dates.format(now(), "yyyymmdd_HHMMSS")
-CSV.write("on_off_compare_data/LD_AdaOPS_$(timestamp).csv", df)
+CSV.write("data_Ada/LD_AdaOPS_$(timestamp).csv", df)
 
 println("\nTotal return: $(sum(results))")
 println("Average return: $(mean(results))")
