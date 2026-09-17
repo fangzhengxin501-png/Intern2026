@@ -19,7 +19,6 @@ POMDPTools = "7588e00f-9cae-40de-98dc-e0c70c48cdd7"
 POMDPs = "a93abf59-7444-517b-a68a-c42f96afdd7d"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
-RoombaPOMDPs = "fe2df5ea-4d44-4e5a-a895-9dbc87b19b37"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 
 [compat]
@@ -34,7 +33,6 @@ OrderedCollections = "1"
 POMDPModels = "0.4.22"
 POMDPTools = "1"
 POMDPs = "0.9, 1"
-RoombaPOMDPs = "0.1.0"
 StatsBase = "0.34"
 julia = "1.6"
 
