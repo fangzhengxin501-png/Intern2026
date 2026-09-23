@@ -253,7 +253,9 @@ function GetMap2RawStatesAndObsClusters_Weighted_Random(
     num_obs_clusters::Int;
     num_trajectories::Int = 1000,
     trajectory_length::Int = 50,
-    replication_scale::Float64 = 20.0
+    replication_scale::Float64 = 20.0,
+    use_pca::Bool = true,        # [PCA] false → 恒等映射，与旧版行为一致（对照用）
+    pca_cutoff::Float64 = 0.95   # [PCA] 保留累计方差 ≥ cutoff 的最少主成分（同 python 默认）
 ) where {POMDP, ASpace}
 
     # ========== 1. Sampling ==========
@@ -296,13 +298,46 @@ function GetMap2RawStatesAndObsClusters_Weighted_Random(
     max_indices = findall(reward_values .== r_max)
     
     @info "Max reward: $r_max, found $(length(max_indices)) samples with this reward"
+
+
+   # ========== add PCA in this regin ==========
+    # [PCA] 普通 PCA，对应 PCA_function.py::pca_reconstruct
+    # 列 = 样本（D×N），与 python 行 = 样本相反 → 主方向取 U 的列（python 取 Vt 的行）
+    X_raw = hcat(obs_samples...)                          # D × N
+    D_obs = size(X_raw, 1)
+
+    if use_pca
+        obs_mean = vec(mean(X_raw, dims=2))               # python: mean_row
+        X_c      = X_raw .- obs_mean                      # python: A_centered
+        F        = svd(X_c)                               # 瘦 SVD：X_c = U Σ Vᵀ
+        sv2      = F.S .^ 2
+        if sum(sv2) > 0
+            cum_ratio = cumsum(sv2) ./ sum(sv2)
+            n_pc = something(findfirst(>=(pca_cutoff), cum_ratio), length(sv2))  # python: searchsorted+1
+        else                                              # 观测全相同，方差为 0
+            cum_ratio = ones(length(sv2))
+            n_pc = 1
+        end
+        pcs     = F.U[:, 1:n_pc]                          # D × k，python: principal_components.T
+        rel_err = sqrt(sum(sv2[n_pc+1:end])) / norm(X_raw)   # python: relative_frobenius_error
+        @info "PCA: $D_obs → $n_pc dims, explained var = $(round(cum_ratio[n_pc], digits=4)), rel. Fro err = $(round(rel_err, digits=4))"
+    else
+        obs_mean = zeros(D_obs)
+        pcs      = Matrix{Float64}(I, D_obs, D_obs)       # 恒等 → 等价旧版
+    end
+
+    Z         = pcs' * (X_raw .- obs_mean)                # k × N，python: projected_data
+    obs_pca   = [Z[:, j] for j in 1:size(Z, 2)]           # step 3 起替代 obs_samples
+    to_raw(z) = obs_mean .+ pcs * z                       # 得分空间 → 原始空间（中心反投影）
+
     
     # ========== 3. Save max reward observations ==========
     if isempty(max_indices)
         error("No samples with max reward found!")
     end
     
-    max_obs = [obs_samples[i] for i in max_indices]
+    # max_obs = [obs_samples[i] for i in max_indices]
+    max_obs = [obs_pca[i] for i in max_indices]           # [PCA]
     
     if length(max_obs) >= 2
         max_obs_matrix = hcat(max_obs...)
@@ -313,21 +348,25 @@ function GetMap2RawStatesAndObsClusters_Weighted_Random(
         @info "Using single max-reward observation as extreme cluster center"
     end
     
-    @info "Extreme cluster center (first 5 dims): $(extreme_center[1:min(5, length(extreme_center))])"
+    @info "Extreme cluster center (first 5 dims, PCA space): $(extreme_center[1:min(5, length(extreme_center))])"
     
     # ========== 4. Other observations ==========
     other_indices = findall(reward_values .< r_max)
     
     if isempty(other_indices)
         @warn "All observations have the same reward ($r_max). Returning single cluster."
-        dummy_kmeans = (centers = hcat(extreme_center),
+        extreme_center_raw = to_raw(extreme_center)       # [PCA] 反投影
+        # dummy_kmeans = (centers = hcat(extreme_center),
+        dummy_kmeans = (centers = hcat(extreme_center_raw),
                        totalcost = 0.0,
                        assignments = ones(Int, length(obs_samples)),
                        counts = [length(obs_samples)])
-        return [extreme_center], dummy_kmeans
+        # return [extreme_center], dummy_kmeans
+        return [extreme_center_raw], dummy_kmeans
     end
     
-    other_obs = [obs_samples[i] for i in other_indices]
+    # other_obs = [obs_samples[i] for i in other_indices]
+    other_obs = [obs_pca[i] for i in other_indices]       # [PCA]
     other_rewards = [reward_values[i] for i in other_indices]
     
     @info "Other samples: $(length(other_obs)) with rewards in [$r_min, $r_max)"
@@ -360,10 +399,10 @@ function GetMap2RawStatesAndObsClusters_Weighted_Random(
         return hcat(cols...)
     end
     
-    other_matrix = hcat(other_obs...)
+    other_matrix = hcat(other_obs...)                     # 现在是 k × N（PCA 得分）
     other_weighted = replicate_by_weight(other_matrix, weights, replication_scale)
     
-    # ========== 7. Clustering ==========
+    # ========== 7. Clustering ==========（输入已是 PCA 得分，代码不变）
     remaining_clusters = max(1, num_obs_clusters - 1)
     actual_k = min(remaining_clusters, size(other_weighted, 2))
     
@@ -385,10 +424,11 @@ function GetMap2RawStatesAndObsClusters_Weighted_Random(
     # ========== 8. Combine all clusters ==========
     all_centers = [extreme_center]
     append!(all_centers, other_centers)
+    all_centers = [to_raw(c) for c in all_centers]        # [PCA] 反投影回原始空间，下游 predict_cluster 不用改
     
     @info "Final clustering: $(length(all_centers)) clusters (1 max-reward cluster + $(length(other_centers)) normal clusters)"
     
-    # ========== 9. Build kmeans_result ==========
+    # ========== 9. Build kmeans_result ==========（原始空间；分配结果与 PCA 空间等价）
     full_centers = hcat([c for c in all_centers]...)
     
     all_obs_matrix = hcat(obs_samples...)
@@ -411,7 +451,6 @@ function GetMap2RawStatesAndObsClusters_Weighted_Random(
     
     return all_centers, kmeans_result
 end
-
 
 
 function generate_initial_particles(b0::B, num_particles::Int) where {B}
